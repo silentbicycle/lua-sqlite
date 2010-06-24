@@ -1,5 +1,5 @@
 # Project
-LIBNAME=	sqlitec
+LIBNAME=	sqlite
 LIBVER=		1.0
 
 # Lua-specific paths and libraries

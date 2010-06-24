@@ -1,26 +1,30 @@
 require "sqlite"
 
-bob = sqlite.open()
-
 print("Version: ", sqlite.version())
 print("Version #: ", sqlite.version_number())
 
-print("db is ", bob)
+db = sqlite.open()
+print(db)
 
-joe = bob:prepare("SELECT * FROM sqlite_master;")
-print(joe)
-print(joe:step())
-
-
-joe = bob:exec([[
+print("making table:", db:exec([[
 CREATE TABLE foo (
    id INTEGER PRIMARY KEY,
-   foo TEXT);]])
+   t TEXT);]]))
 
-print(joe)
+local s = db:prepare("INSERT INTO foo (t) VALUES (:f);")
+s:bind(":f", "balloonis")
+print("step:", s:step())
+print("reset:", s:reset())
+
+s = db:prepare("SELECT * FROM foo;")
+print("step:", s:step())
+print(1, s:col_type(1), s:col_text(1))
+print("reset:", s:reset())
+
 
 print "BOO"
-ron, t = bob:get_table("SELECT * FROM sqlite_master;")
+ron, t = db:get_table("SELECT * FROM foo;")
 print "YAH"
 print(ron)
+my.dump(ron)
 print(t)

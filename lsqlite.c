@@ -4,7 +4,8 @@
 #include <lua.h>
 #include <lauxlib.h>
 #include <sqlite3.h>
-#include "lsqlitec.h"
+#include "lsqlite.h"
+#include <assert.h>
 
 #define SI static int
 
@@ -99,34 +100,38 @@ SI exec(lua_State *L) {
         int top = lua_gettop(L);
         int (*cb)(void *,int,char**,char**);
         void *arg;
+        int res;
         if (top > 2) {
-                /* TODO: cb and arg */
+                LERROR("TODO: cb and arg");
         }
 
-        int res = sqlite3_exec(ldb->db, sql, cb, arg, err);
+        res = sqlite3_exec(ldb->db, sql, cb, arg, err);
         return pushres(L, res);
 }
 
 SI get_table(lua_State *L) {
         LuaSQLite *ldb = check_db(1);
-        const char *sql = luaL_checklstring(L, 2, NULL);
+        const char *sql = luaL_checkstring(L, 2);
         char ***qres;
-        int nrow;
-        int ncol;
+        int nrow, ncol;
         char **err;
-        int row, col;
-        int res = sqlite3_get_table(ldb->db, sql, qres, &nrow, &ncol, err);
+        int row, col, res;
+        char *cell;
+        res = sqlite3_get_table(ldb->db, sql, qres, &nrow, &ncol, err);
 
         /* make a table{} and for i=0,nrow add { (i=0,ncol) } */
         lua_createtable(L, nrow, 0);
-        for (row=0; row < nrow; row++) {
+        printf("nrow=%d, ncol=%d\n", nrow, ncol);
+        for (row=0; row <= nrow; row++) {
                 lua_createtable(L, ncol, 0);
                 for (col=0; col < ncol; col++) {
-                        printf("c %d, r %d -> %s\n",
-                            col, row, qres[row][col]);
-                        lua_pushstring(L, qres[row][col]);
+                        cell = qres[row][col];
                         lua_pushinteger(L, col);
-                        lua_settable(L, -2);
+                        if (cell == NULL)
+                                lua_pushnil(L);
+                        else
+                                lua_pushstring(L, cell);
+                        lua_settable(L, -3);
                 }
                 lua_pushinteger(L, row);
                 lua_settable(L, -3);
@@ -214,43 +219,75 @@ SI stmt_tostring(lua_State *L) {
 /*     int sqlite3_bind_value(sqlite3_stmt*, int, const sqlite3_value*); */
 /*     int sqlite3_bind_zeroblob(sqlite3_stmt*, int, int n); */
 
-SI bind_double(lua_State *L) {
-        LuaSQLiteStmt *s = check_stmt(1);
-        int i = luaL_checkinteger(L, 2);
-        double v = luaL_checknumber(L, 3);
-        return pushres(L, sqlite3_bind_double(s->stmt, i, v));
-}
-
-SI bind_int(lua_State *L) {
-        LuaSQLiteStmt *s = check_stmt(1);
-        int i = luaL_checkinteger(L, 2);
-        int v = luaL_checkinteger(L, 3);
-        return pushres(L, sqlite3_bind_int(s->stmt, i, v));
-}
-
-SI bind_null(lua_State *L) {
-        LuaSQLiteStmt *s = check_stmt(1);
-        int i = luaL_checkinteger(L, 2);
-        return pushres(L, sqlite3_bind_null(s->stmt, i));
-}
-
-SI bind_text(lua_State *L) {
-        LuaSQLiteStmt *s = check_stmt(1);
-        int i = luaL_checkinteger(L, 2);
-        size_t len;
-        const char* v = luaL_checklstring(L, 3, &len);
-        return pushres(L, sqlite3_bind_text(s->stmt, i, v, len, SQLITE_TRANSIENT));
-}
-
 SI bind_param_idx(lua_State *L) {
         LuaSQLiteStmt *s = check_stmt(1);
         const char *name = luaL_checkstring(L, 2);
         return sqlite3_bind_parameter_index(s->stmt, name);
 }
 
+SI param_idx(lua_State *L, sqlite3_stmt *stmt, int i) {
+        const char* key;
+        if (lua_isnumber(L, i)) {
+                return lua_tonumber(L, i);
+        } else {
+                key = luaL_checkstring(L, i);
+                return sqlite3_bind_parameter_index(stmt, key);
+        }
+}
+
+SI bind(lua_State *L) {
+        LuaSQLiteStmt *s = check_stmt(1);
+        int i = param_idx(L, s->stmt, 2);
+        int t = lua_type(L, 3);
+        size_t len;
+        const char* v;
+        switch (t) {
+        case LUA_TNIL:
+                return pushres(L, sqlite3_bind_null(s->stmt, i));
+        case LUA_TBOOLEAN:
+                return pushres(L, sqlite3_bind_int(s->stmt, i, lua_tointeger(L, 3)));
+        case LUA_TNUMBER:
+                return pushres(L, sqlite3_bind_double(s->stmt, i, lua_tonumber(L, 3)));
+        case LUA_TSTRING:
+                v = luaL_checklstring(L, 3, &len);
+                return pushres(L, sqlite3_bind_text(s->stmt, i, v,
+                        len, SQLITE_TRANSIENT));
+        default: LERROR("Cannot bind type");
+        }
+        return 0;
+}
+
 SI bind_param_count(lua_State *L) {
         LuaSQLiteStmt *s = check_stmt(1);
         return sqlite3_bind_parameter_count(s->stmt);
+}
+
+SI bind_double(lua_State *L) {
+        LuaSQLiteStmt *s = check_stmt(1);
+        int i = param_idx(L, s->stmt, 2);
+        double v = luaL_checknumber(L, 3);
+        return pushres(L, sqlite3_bind_double(s->stmt, i, v));
+}
+
+SI bind_int(lua_State *L) {
+        LuaSQLiteStmt *s = check_stmt(1);
+        int i = param_idx(L, s->stmt, 2);
+        int v = luaL_checkinteger(L, 3);
+        return pushres(L, sqlite3_bind_int(s->stmt, i, v));
+}
+
+SI bind_null(lua_State *L) {
+        LuaSQLiteStmt *s = check_stmt(1);
+        int i = param_idx(L, s->stmt, 2);
+        return pushres(L, sqlite3_bind_null(s->stmt, i));
+}
+
+SI bind_text(lua_State *L) {
+        LuaSQLiteStmt *s = check_stmt(1);
+        int i = param_idx(L, s->stmt, 2);
+        size_t len;
+        const char* v = luaL_checklstring(L, 3, &len);
+        return pushres(L, sqlite3_bind_text(s->stmt, i, v, len, SQLITE_TRANSIENT));
 }
 
 /* const void *sqlite3_column_blob(sqlite3_stmt*, int iCol); */
@@ -287,9 +324,20 @@ SI col_text(lua_State *L) {
 SI col_type(lua_State *L) {
         LuaSQLiteStmt *s = check_stmt(1);
         int idx = luaL_checkinteger(L, 2);
-        lua_pushinteger(L, sqlite3_column_type(s->stmt, idx));
+        const char *name;
+        int t = sqlite3_column_type(s->stmt, idx - 1);
+        switch (t) {
+        case SQLITE_INTEGER: name = "integer"; break;
+        case SQLITE_FLOAT: name = "float"; break;
+        case SQLITE_TEXT: name = "text"; break;
+        case SQLITE_BLOB: name = "blob"; break;
+        case SQLITE_NULL: name = "null"; break;
+        default: name = "error"; break;
+        }
+        lua_pushstring(L, name);
         return 1;
 }
+
 
 /*************/
 /* Extension */
@@ -336,6 +384,7 @@ LIB(db_mt) = {
 LIB(stmt_mt) = {
         { "step", step },
         { "reset", reset },
+        { "bind", bind },
         { "bind_double", bind_double },
         { "bind_int", bind_int },
         { "bind_null", bind_null },
@@ -355,7 +404,7 @@ LIB(stmt_mt) = {
 /* ... */
 
 
-LIB(sqlite_clib) = {
+LIB(sqlite_lib) = {
         { "open", open },
         { "version", ver },
         { "version_number", ver_num },
@@ -370,9 +419,9 @@ LIB(sqlite_clib) = {
         lua_pop(L, 1)
 
 
-int luaopen_sqlitec(lua_State *L) {
+int luaopen_sqlite(lua_State *L) {
         set_MT("LuaSQLite", db_mt);
         set_MT("LuaSQLiteStmt", stmt_mt);
-        luaL_register(L, "sqlitec", sqlite_clib);
+        luaL_register(L, "sqlite", sqlite_lib);
         return 1;
 }
