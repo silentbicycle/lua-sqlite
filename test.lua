@@ -9,17 +9,21 @@ print(db)
 print("making table:", db:exec([[
 CREATE TABLE foo (
    id INTEGER PRIMARY KEY,
-   t TEXT);]]))
+   t TEXT NOT NULL,
+   s REAL NOT NULL);]]))
 
-local s = db:prepare("INSERT INTO foo (t) VALUES (:f);")
+local s = db:prepare("INSERT INTO foo (t, s) VALUES (:f, :s);")
 s:bind(":f", "balloonis")
+s:bind(":s", 1234.5)
 print("step:", s:step())
 print("reset:", s:reset())
 
 s = db:prepare("SELECT * FROM foo;")
 print("step:", s:step())
-print(1, s:col_type(1), s:col_text(1))
+for i=1,3 do print("column ", i, s:column_type(i), s:column_text(i)) end
+print("Columns 'it':", s:columns("itf"))
 print("reset:", s:reset())
+
 
 
 print "BOO"

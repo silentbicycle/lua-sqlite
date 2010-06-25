@@ -297,10 +297,57 @@ SI bind_text(lua_State *L) {
 /* const void *sqlite3_column_text16(sqlite3_stmt*, int iCol); */
 /* sqlite3_value *sqlite3_column_value(sqlite3_stmt*, int iCol); */
 
+
+/* Higher level interface, e.g.
+ * id, key, count, score = s:columns("itif") --int, text, int, float */
+SI columns(lua_State *L) {
+        LuaSQLiteStmt *s = check_stmt(1);
+        size_t len, tlen;
+        const char* cs = luaL_checklstring(L, 2, &len);
+        double d;
+        int i, n;
+        const char *t;
+        
+        int ct = sqlite3_column_count(s->stmt);
+        if (len != ct) {
+                lua_pushfstring(L, "Invalid column count %d, result has %d columns", len, ct);
+                lua_error(L);
+        }
+        for (i=0; i<len; i++) {
+                switch (cs[i]) {
+                case 'i':       /* int */
+                        n = sqlite3_column_int(s->stmt, i);
+                        lua_pushinteger(L, n);
+                        break;
+                case 'f':       /* float */
+                        d = sqlite3_column_double(s->stmt, i);
+                        lua_pushnumber(L, d);
+                        break;
+                case 't':       /* text */
+                        tlen = sqlite3_column_bytes(s->stmt, i);
+                        t = sqlite3_column_text(s->stmt, i);
+                        lua_pushlstring(L, t, tlen);
+                        break;
+                case 'b':       /* blob */
+                        tlen = sqlite3_column_bytes(s->stmt, i);
+                        t = (const char*)sqlite3_column_blob(s->stmt, i);
+                        lua_pushlstring(L, t, tlen);
+                        break;
+                default:
+                        lua_pushfstring(L, "Invalid column tag '%c' -- must be in 'iftb'",
+                            cs[i]);
+                        lua_error(L);
+                        break;
+                }
+        }
+        
+        return len;
+}
+
 SI col_double(lua_State *L) {
         LuaSQLiteStmt *s = check_stmt(1);
         int idx = luaL_checkinteger(L, 2);
-        double d = sqlite3_column_double(s->stmt, idx);
+        double d = sqlite3_column_double(s->stmt, idx - 1);
         lua_pushnumber(L, d);
         return 1;
 }
@@ -308,7 +355,7 @@ SI col_double(lua_State *L) {
 SI col_int(lua_State *L) {
         LuaSQLiteStmt *s = check_stmt(1);
         int idx = luaL_checkinteger(L, 2);
-        int i = sqlite3_column_int(s->stmt, idx);
+        int i = sqlite3_column_int(s->stmt, idx - 1);
         lua_pushnumber(L, i);
         return 1;
 }
@@ -316,8 +363,14 @@ SI col_int(lua_State *L) {
 SI col_text(lua_State *L) {
         LuaSQLiteStmt *s = check_stmt(1);
         int idx = luaL_checkinteger(L, 2);
-        const unsigned char* t = sqlite3_column_text(s->stmt, idx);
+        const unsigned char* t = sqlite3_column_text(s->stmt, idx - 1);
         lua_pushstring(L, t);
+        return 1;
+}
+
+SI col_count(lua_State *L) {
+        LuaSQLiteStmt *s = check_stmt(1);
+        lua_pushinteger(L, sqlite3_column_count(s->stmt));
         return 1;
 }
 
@@ -391,10 +444,12 @@ LIB(stmt_mt) = {
         { "bind_text", bind_text },
         { "bind_param_count", bind_param_count },
         { "bind_param_index", bind_param_idx },
-        { "col_double", col_double },
-        { "col_int", col_int },
-        { "col_text", col_text },
-        { "col_type", col_type },
+        { "column_double", col_double },
+        { "column_int", col_int },
+        { "column_text", col_text },
+        { "column_type", col_type },
+        { "column_count", col_count },
+        { "columns", columns },
         { "__tostring", stmt_tostring },
         { "__gc", stmt_gc },
         { NULL, NULL },
