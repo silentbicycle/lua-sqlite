@@ -235,26 +235,78 @@ SI param_idx(lua_State *L, sqlite3_stmt *stmt, int i) {
         }
 }
 
-SI bind(lua_State *L) {
-        LuaSQLiteStmt *s = check_stmt(1);
-        int i = param_idx(L, s->stmt, 2);
-        int t = lua_type(L, 3);
+SI bind_dtype(sqlite3_stmt *s, lua_State *L, int idx) {
+        int t;
+        const char *v;
         size_t len;
-        const char* v;
+
+        t = lua_type(L, -1);
+        printf("Binding idx %d to type %d\n", idx, t);
         switch (t) {
         case LUA_TNIL:
-                return pushres(L, sqlite3_bind_null(s->stmt, i));
+                return pushres(L, sqlite3_bind_null(s, idx));
         case LUA_TBOOLEAN:
-                return pushres(L, sqlite3_bind_int(s->stmt, i, lua_tointeger(L, 3)));
+                return pushres(L, sqlite3_bind_int(s, idx, lua_tointeger(L, -1)));
         case LUA_TNUMBER:
-                return pushres(L, sqlite3_bind_double(s->stmt, i, lua_tonumber(L, 3)));
+                return pushres(L, sqlite3_bind_double(s, idx, lua_tonumber(L, -1)));
         case LUA_TSTRING:
-                v = luaL_checklstring(L, 3, &len);
-                return pushres(L, sqlite3_bind_text(s->stmt, i, v,
+                v = luaL_checklstring(L, -1, &len);
+                return pushres(L, sqlite3_bind_text(s, idx, v,
                         len, SQLITE_TRANSIENT));
         default: LERROR("Cannot bind type");
         }
         return 0;
+        
+}
+
+/* Take a k=v table and call bind(":" .. k, v) for each.
+   Take a { v1, v2, v3 } table and call bind([i], v) for each. */
+SI bind_table(lua_State *L, LuaSQLiteStmt *s) {
+        size_t len = lua_objlen(L, 2);
+        int i, idx;
+        const char* vartag = ":"; /* TODO make this an optional argument? */
+
+        if (len == 0) {         /* k=v table */
+                lua_pushnil(L); /* start at first key */
+                while (lua_next(L, 2) != 0) {
+                        lua_pushlstring(L, vartag, 1);
+                        lua_pushvalue(L, -3);
+                        lua_concat(L, 2); /* prepend : to key */
+                        idx = sqlite3_bind_parameter_index(s->stmt, lua_tostring(L, -1));
+                        if (idx == 0) {
+                                lua_pushfstring(L, "Invalid statement parameter '%s'",
+                                    lua_tostring(L, -1));
+                                lua_error(L);
+                        }
+                        printf("Index is %d\n", idx);
+                        lua_pop(L, 1);
+                        bind_dtype(s->stmt, L, idx);
+                        lua_pop(L, 1);
+                        if (1) printf("* %s (%s) = %s (%s)\n",
+                            lua_tostring(L, -2),
+                            lua_typename(L, lua_type(L, -2)),
+                            lua_tostring(L, -1),
+                            lua_typename(L, lua_type(L, -1)));
+                        lua_pop(L, 1);
+                }
+        } else {                /* array */
+                for (i=0; i < len; i++) {
+                        lua_pushinteger(L, i + 1);
+                        lua_gettable(L, 2);
+                        bind_dtype(s->stmt, L, i + 1);
+                        lua_pop(L, 1);
+                }
+        }
+        return 1;
+}
+
+SI bind(lua_State *L) {
+        LuaSQLiteStmt *s = check_stmt(1);
+        int i;
+        if (lua_type(L, 2) == LUA_TTABLE) return bind_table(L, s);
+
+        i = param_idx(L, s->stmt, 2);
+        return bind_dtype(s->stmt, L, i);
 }
 
 SI bind_param_count(lua_State *L) {

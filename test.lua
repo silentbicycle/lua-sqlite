@@ -18,12 +18,24 @@ s:bind(":s", 1234.5)
 print("step:", s:step())
 print("reset:", s:reset())
 
-s = db:prepare("SELECT * FROM foo;")
+s = db:prepare("INSERT INTO foo (t, s) VALUES (?, ?);")
+s:bind { "abba zabba", 9999.88888 }
 print("step:", s:step())
-for i=1,3 do print("column ", i, s:column_type(i), s:column_text(i)) end
-print("Columns 'it':", s:columns("itf"))
 print("reset:", s:reset())
 
+s = db:prepare("INSERT INTO foo (t, s) VALUES (:f, :s);")
+s:bind { f="malarkey", s=30949 }
+print("step:", s:step())
+print("reset:", s:reset())
+
+
+s = db:prepare("SELECT * FROM foo;")
+while s:step() == "row" do
+   --for i=1,3 do print("column ", i, s:column_type(i), s:column_text(i)) end
+   print("Columns 'it':", s:columns("itf"))
+   
+end
+print("reset:", s:reset())
 
 
 print "BOO"
