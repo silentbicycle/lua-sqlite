@@ -8,7 +8,7 @@
 #include <assert.h>
 
 #define SI static int
-
+#define DEBUG 0
 
 SI ver(lua_State *L) { lua_pushstring(L, sqlite3_libversion()); return 1; }
 SI ver_num(lua_State *L) { lua_pushinteger(L, sqlite3_libversion_number()); return 1; }
@@ -112,6 +112,7 @@ SI exec(lua_State *L) {
 SI get_table(lua_State *L) {
         LuaSQLite *ldb = check_db(1);
         const char *sql = luaL_checkstring(L, 2);
+        lua_pop(L, 2);
         char ***qres;
         int nrow, ncol;
         char **err;
@@ -119,27 +120,33 @@ SI get_table(lua_State *L) {
         char *cell;
         res = sqlite3_get_table(ldb->db, sql, qres, &nrow, &ncol, err);
 
-        /* make a table{} and for i=0,nrow add { (i=0,ncol) } */
+        /* Make a table of rows, each of which is an array of column strings. */
         lua_createtable(L, nrow, 0);
-        printf("nrow=%d, ncol=%d\n", nrow, ncol);
+        if (DEBUG) printf("nrow=%d, ncol=%d\n", nrow, ncol);
         for (row=0; row <= nrow; row++) {
                 lua_createtable(L, ncol, 0);
                 for (col=0; col < ncol; col++) {
-                        cell = qres[row][col];
-                        lua_pushinteger(L, col);
+                        cell = qres[0][ncol*row + col];
                         if (cell == NULL)
                                 lua_pushnil(L);
                         else
                                 lua_pushstring(L, cell);
+                        lua_pushinteger(L, col + 1);
+                        lua_insert(L, -2);
                         lua_settable(L, -3);
                 }
-                lua_pushinteger(L, row);
+                if (row == 0)
+                        lua_pushstring(L, "columns");
+                else
+                        lua_pushinteger(L, row);
+                lua_insert(L, -2);
                 lua_settable(L, -3);
         }
 
-        /* TODO build a Lua matrix w/ results */
         sqlite3_free_table(*qres);
-        return pushres(L, res) + 1;
+        pushres(L, res);
+        lua_insert(L, -2);
+        return 2;
 }
 
 
@@ -282,7 +289,7 @@ SI bind_table(lua_State *L, LuaSQLiteStmt *s) {
                         lua_pop(L, 1);
                         bind_dtype(s->stmt, L, idx);
                         lua_pop(L, 1);
-                        if (1) printf("* %s (%s) = %s (%s)\n",
+                        if (DEBUG) printf("* %s (%s) = %s (%s)\n",
                             lua_tostring(L, -2),
                             lua_typename(L, lua_type(L, -2)),
                             lua_tostring(L, -1),
