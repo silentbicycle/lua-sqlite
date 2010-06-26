@@ -31,7 +31,6 @@ s:bind { f="malarkey", s=30949 }
 print("step:", s:step())
 print("reset:", s:reset())
 
-
 s = db:prepare("SELECT * FROM foo;")
 while s:step() == "row" do
    --for i=1,3 do print("column ", i, s:column_type(i), s:column_text(i)) end
@@ -40,7 +39,6 @@ while s:step() == "row" do
 end
 print("reset:", s:reset())
 
-
 -- TODO implicitly wrap s:step(), checking result, and s:reset()
 if false then
    for id, text, score in s:column_iter("itf") do
@@ -48,9 +46,26 @@ if false then
    end
 end
 
+print "GET_TABLE test"
 ok, res = db:get_table("SELECT * FROM foo;")
 print("Status is ", ok)
 print("ok", ok, ok == "ok")
 if ok == "o" .. "k" then my.dump(res) end
+my.dump(res)
 
-
+print "EXEC test"
+local first = true
+local hook = function(colnames, cols)
+                if false and first then
+                   local head = table.concat(colnames, " | ")
+                   print(head)
+                   print(("-"):rep(head:len()))
+                   first = false
+                end
+--                 printf(table.concat(cols, " | "))  -- an error
+                print(table.concat(cols, " | "))
+             end
+if false then
+   print("EXEC", db:exec("SELECT * FROM foo;", hook))
+end
+print "DONE"

@@ -4,6 +4,7 @@
 #include <lua.h>
 #include <lauxlib.h>
 #include <sqlite3.h>
+#include "luawrap.h"
 #include "lsqlite.h"
 #include <assert.h>
 
@@ -60,52 +61,89 @@ SI pushres(lua_State *L, int res) {
 SI open(lua_State *L) {
         size_t len;
         const char *fn = luaL_optlstring(L, 1, ":memory:", &len);
-        sqlite3 **db;
+        sqlite3 *db;
         LuaSQLite *ldb;
         
-        int res = sqlite3_open(fn, db);
+        int res = sqlite3_open(fn, &db);
         if (res == SQLITE_OK) {
                 ldb = (LuaSQLite *)lua_newuserdata(L, sizeof(LuaSQLite));
-                ldb->db = *db;
+                ldb->v = db;
                 luaL_getmetatable(L, "LuaSQLite");
                 lua_setmetatable(L, -2);
                 return 1;
         } else {
-                LERROR(sqlite3_errmsg(*db));
+                LERROR(sqlite3_errmsg(db));
                 return 0;
         }
 }
 
 SI close(lua_State *L) {
         LuaSQLite *ldb = check_db(1);
-        return pushres(L, sqlite3_close(ldb->db));
+        return pushres(L, sqlite3_close(ldb->v));
 }
 
 SI db_tostring(lua_State *L) {
         LuaSQLite *ldb = check_db(1);
-        lua_pushfstring(L, "SQLite db: %p", ldb->db);
+        lua_pushfstring(L, "SQLite db: %p", ldb->v);
         return 1;
 }
 
 SI db_gc(lua_State *L) {
         LuaSQLite *ldb = check_db(1);
-        sqlite3_close(ldb->db);
+        sqlite3_close(ldb->v);
         return 0;
+}
+
+static void push_cell_table(lua_State *L, int len, char** cells) {
+        int i;
+        const char *cell;
+        lua_createtable(L, len, 0);
+        for (i=0; i < len; i++) {
+                cell = cells[i];
+                if (cell == NULL)
+                        lua_pushnil(L);
+                else
+                        lua_pushstring(L, cell);
+                lua_pushinteger(L, i + 1);
+                lua_insert(L, -2);
+                lua_settable(L, -3);
+        }
+}
+
+static void dump(lua_State *L) {
+        int i;
+        for (i=1; i<=lua_gettop(L); i++)
+                printf(" -- %d -> %s (%s)\n",
+                    i, lua_tostring(L, i), lua_typename(L, lua_type(L, i)));
+
+}
+
+/* Wrapper to call optional Lua callback. Called once per row. */
+SI exec_cb(void *ls, int ncols, char** colText, char** colNames) {
+        lua_State *L = (lua_State *) ls;
+        int ok;
+        if (DEBUG) printf("in exec_cb, top = %d\n", lua_gettop(L));
+        assert(lua_type(L, 3) == LUA_TFUNCTION);
+        lua_pushvalue(L, 3);    /* dup */
+        push_cell_table(L, ncols, colNames);
+        push_cell_table(L, ncols, colText);
+        ok = lua_pcall(L, 2, 0, 0);
+        if (DEBUG) printf("ok? %d\n", ok);
+        return ok != 0;         /* 1 -> error, returns abort */
 }
 
 SI exec(lua_State *L) {
         LuaSQLite *ldb = check_db(1);
         const char *sql = luaL_checklstring(L, 2, NULL);
-        char **err;
+        char *err;
         int top = lua_gettop(L);
-        int (*cb)(void *,int,char**,char**);
-        void *arg;
+        int (*cb)(void *,int,char**,char**) = NULL;
         int res;
-        if (top > 2) {
-                LERROR("TODO: cb and arg");
-        }
+        if (top == 3 && lua_type(L, 3) == LUA_TFUNCTION) cb = exec_cb;
 
-        res = sqlite3_exec(ldb->db, sql, cb, arg, err);
+        res = sqlite3_exec(ldb->v, sql, cb, (void*)L, &err);
+        if (err != NULL) printf("ERR: %s", err);
+        printf("RES is %d\n", res);
         return pushres(L, res);
 }
 
@@ -115,26 +153,24 @@ SI get_table(lua_State *L) {
         lua_pop(L, 2);
         char ***qres;
         int nrow, ncol;
-        char **err;
-        int row, col, res;
-        char *cell;
-        res = sqlite3_get_table(ldb->db, sql, qres, &nrow, &ncol, err);
+        char *err;
+        int row, res;
+        char *cells;
+        res = sqlite3_get_table(ldb->v, sql, qres, &nrow, &ncol, &err);
+        if (res != SQLITE_OK) {
+                sqlite3_free_table(*qres);
+                lua_pushstring(L, err);
+                lua_error(L);
+        }
 
         /* Make a table of rows, each of which is an array of column strings. */
         lua_createtable(L, nrow, 0);
         if (DEBUG) printf("nrow=%d, ncol=%d\n", nrow, ncol);
         for (row=0; row <= nrow; row++) {
-                lua_createtable(L, ncol, 0);
-                for (col=0; col < ncol; col++) {
-                        cell = qres[0][ncol*row + col];
-                        if (cell == NULL)
-                                lua_pushnil(L);
-                        else
-                                lua_pushstring(L, cell);
-                        lua_pushinteger(L, col + 1);
-                        lua_insert(L, -2);
-                        lua_settable(L, -3);
-                }
+                /*cell = qres[0][ncol*row + col];*/
+                cells = qres[0] + (ncol * row);
+                push_cell_table(L, ncol, cells);
+
                 if (row == 0)
                         lua_pushstring(L, "columns");
                 else
@@ -156,13 +192,13 @@ SI get_table(lua_State *L) {
 
 SI errcode(lua_State *L) {
         LuaSQLite *ldb = check_db(1);
-        lua_pushinteger(L, sqlite3_errcode(ldb->db));
+        lua_pushinteger(L, sqlite3_errcode(ldb->v));
         return 1;
 }
 
 SI errmsg(lua_State *L) {
         LuaSQLite *ldb = check_db(1);
-        lua_pushstring(L, sqlite3_errmsg(ldb->db));
+        lua_pushstring(L, sqlite3_errmsg(ldb->v));
         return 1;
 }
 
@@ -178,39 +214,39 @@ SI prepare(lua_State *L) {
         LuaSQLiteStmt *lstmt;
         const char **tail;
         const char *sql = luaL_checklstring(L, 2, &len);
-        int res = sqlite3_prepare_v2(ldb->db, sql, len, &stmt, tail);
+        int res = sqlite3_prepare_v2(ldb->v, sql, len, &stmt, tail);
 
         if (res == SQLITE_OK) {
                 lstmt = (LuaSQLiteStmt *)lua_newuserdata(L, sizeof(LuaSQLiteStmt *));
-                lstmt->stmt = stmt;
+                lstmt->v = stmt;
                 luaL_getmetatable(L, "LuaSQLiteStmt");
                 lua_setmetatable(L, -2);
                 lua_pushstring(L, *tail);
                 return 2;
         } else {
-                LERROR(sqlite3_errmsg(ldb->db));
+                LERROR(sqlite3_errmsg(ldb->v));
                 return 0;
         }
 }
 
 SI step(lua_State *L) {
         LuaSQLiteStmt *s = check_stmt(1);
-        return pushres(L, sqlite3_step(s->stmt));
+        return pushres(L, sqlite3_step(s->v));
 }
 
 SI stmt_gc(lua_State *L) {
         LuaSQLiteStmt *s = check_stmt(1);
-        return pushres(L, sqlite3_finalize(s->stmt));
+        return pushres(L, sqlite3_finalize(s->v));
 }
 
 SI reset(lua_State *L) {
         LuaSQLiteStmt *s = check_stmt(1);
-        return pushres(L, sqlite3_reset(s->stmt));
+        return pushres(L, sqlite3_reset(s->v));
 }
 
 SI stmt_tostring(lua_State *L) {
         LuaSQLiteStmt *lstmt = check_stmt(1);
-        lua_pushfstring(L, "SQLite stmt: %p", lstmt->stmt);
+        lua_pushfstring(L, "SQLite stmt: %p", lstmt->v);
         return 1;
 }
 
@@ -229,7 +265,7 @@ SI stmt_tostring(lua_State *L) {
 SI bind_param_idx(lua_State *L) {
         LuaSQLiteStmt *s = check_stmt(1);
         const char *name = luaL_checkstring(L, 2);
-        return sqlite3_bind_parameter_index(s->stmt, name);
+        return sqlite3_bind_parameter_index(s->v, name);
 }
 
 SI param_idx(lua_State *L, sqlite3_stmt *stmt, int i) {
@@ -279,7 +315,7 @@ SI bind_table(lua_State *L, LuaSQLiteStmt *s) {
                         lua_pushlstring(L, vartag, 1);
                         lua_pushvalue(L, -3);
                         lua_concat(L, 2); /* prepend : to key */
-                        idx = sqlite3_bind_parameter_index(s->stmt, lua_tostring(L, -1));
+                        idx = sqlite3_bind_parameter_index(s->v, lua_tostring(L, -1));
                         if (idx == 0) {
                                 lua_pushfstring(L, "Invalid statement parameter '%s'",
                                     lua_tostring(L, -1));
@@ -287,7 +323,7 @@ SI bind_table(lua_State *L, LuaSQLiteStmt *s) {
                         }
                         printf("Index is %d\n", idx);
                         lua_pop(L, 1);
-                        bind_dtype(s->stmt, L, idx);
+                        bind_dtype(s->v, L, idx);
                         lua_pop(L, 1);
                         if (DEBUG) printf("* %s (%s) = %s (%s)\n",
                             lua_tostring(L, -2),
@@ -300,7 +336,7 @@ SI bind_table(lua_State *L, LuaSQLiteStmt *s) {
                 for (i=0; i < len; i++) {
                         lua_pushinteger(L, i + 1);
                         lua_gettable(L, 2);
-                        bind_dtype(s->stmt, L, i + 1);
+                        bind_dtype(s->v, L, i + 1);
                         lua_pop(L, 1);
                 }
         }
@@ -312,41 +348,41 @@ SI bind(lua_State *L) {
         int i;
         if (lua_type(L, 2) == LUA_TTABLE) return bind_table(L, s);
 
-        i = param_idx(L, s->stmt, 2);
-        return bind_dtype(s->stmt, L, i);
+        i = param_idx(L, s->v, 2);
+        return bind_dtype(s->v, L, i);
 }
 
 SI bind_param_count(lua_State *L) {
         LuaSQLiteStmt *s = check_stmt(1);
-        return sqlite3_bind_parameter_count(s->stmt);
+        return sqlite3_bind_parameter_count(s->v);
 }
 
 SI bind_double(lua_State *L) {
         LuaSQLiteStmt *s = check_stmt(1);
-        int i = param_idx(L, s->stmt, 2);
+        int i = param_idx(L, s->v, 2);
         double v = luaL_checknumber(L, 3);
-        return pushres(L, sqlite3_bind_double(s->stmt, i, v));
+        return pushres(L, sqlite3_bind_double(s->v, i, v));
 }
 
 SI bind_int(lua_State *L) {
         LuaSQLiteStmt *s = check_stmt(1);
-        int i = param_idx(L, s->stmt, 2);
+        int i = param_idx(L, s->v, 2);
         int v = luaL_checkinteger(L, 3);
-        return pushres(L, sqlite3_bind_int(s->stmt, i, v));
+        return pushres(L, sqlite3_bind_int(s->v, i, v));
 }
 
 SI bind_null(lua_State *L) {
         LuaSQLiteStmt *s = check_stmt(1);
-        int i = param_idx(L, s->stmt, 2);
-        return pushres(L, sqlite3_bind_null(s->stmt, i));
+        int i = param_idx(L, s->v, 2);
+        return pushres(L, sqlite3_bind_null(s->v, i));
 }
 
 SI bind_text(lua_State *L) {
         LuaSQLiteStmt *s = check_stmt(1);
-        int i = param_idx(L, s->stmt, 2);
+        int i = param_idx(L, s->v, 2);
         size_t len;
         const char* v = luaL_checklstring(L, 3, &len);
-        return pushres(L, sqlite3_bind_text(s->stmt, i, v, len, SQLITE_TRANSIENT));
+        return pushres(L, sqlite3_bind_text(s->v, i, v, len, SQLITE_TRANSIENT));
 }
 
 /* const void *sqlite3_column_blob(sqlite3_stmt*, int iCol); */
@@ -367,7 +403,7 @@ SI columns(lua_State *L) {
         int i, n;
         const char *t;
         
-        int ct = sqlite3_column_count(s->stmt);
+        int ct = sqlite3_column_count(s->v);
         if (len != ct) {
                 lua_pushfstring(L, "Invalid column count %d, result has %d columns", len, ct);
                 lua_error(L);
@@ -375,21 +411,21 @@ SI columns(lua_State *L) {
         for (i=0; i<len; i++) {
                 switch (cs[i]) {
                 case 'i':       /* int */
-                        n = sqlite3_column_int(s->stmt, i);
+                        n = sqlite3_column_int(s->v, i);
                         lua_pushinteger(L, n);
                         break;
                 case 'f':       /* float */
-                        d = sqlite3_column_double(s->stmt, i);
+                        d = sqlite3_column_double(s->v, i);
                         lua_pushnumber(L, d);
                         break;
                 case 't':       /* text */
-                        tlen = sqlite3_column_bytes(s->stmt, i);
-                        t = sqlite3_column_text(s->stmt, i);
+                        tlen = sqlite3_column_bytes(s->v, i);
+                        t = sqlite3_column_text(s->v, i);
                         lua_pushlstring(L, t, tlen);
                         break;
                 case 'b':       /* blob */
-                        tlen = sqlite3_column_bytes(s->stmt, i);
-                        t = (const char*)sqlite3_column_blob(s->stmt, i);
+                        tlen = sqlite3_column_bytes(s->v, i);
+                        t = (const char*)sqlite3_column_blob(s->v, i);
                         lua_pushlstring(L, t, tlen);
                         break;
                 default:
@@ -406,7 +442,7 @@ SI columns(lua_State *L) {
 SI col_double(lua_State *L) {
         LuaSQLiteStmt *s = check_stmt(1);
         int idx = luaL_checkinteger(L, 2);
-        double d = sqlite3_column_double(s->stmt, idx - 1);
+        double d = sqlite3_column_double(s->v, idx - 1);
         lua_pushnumber(L, d);
         return 1;
 }
@@ -414,7 +450,7 @@ SI col_double(lua_State *L) {
 SI col_int(lua_State *L) {
         LuaSQLiteStmt *s = check_stmt(1);
         int idx = luaL_checkinteger(L, 2);
-        int i = sqlite3_column_int(s->stmt, idx - 1);
+        int i = sqlite3_column_int(s->v, idx - 1);
         lua_pushnumber(L, i);
         return 1;
 }
@@ -422,14 +458,14 @@ SI col_int(lua_State *L) {
 SI col_text(lua_State *L) {
         LuaSQLiteStmt *s = check_stmt(1);
         int idx = luaL_checkinteger(L, 2);
-        const unsigned char* t = sqlite3_column_text(s->stmt, idx - 1);
+        const unsigned char* t = sqlite3_column_text(s->v, idx - 1);
         lua_pushstring(L, t);
         return 1;
 }
 
 SI col_count(lua_State *L) {
         LuaSQLiteStmt *s = check_stmt(1);
-        lua_pushinteger(L, sqlite3_column_count(s->stmt));
+        lua_pushinteger(L, sqlite3_column_count(s->v));
         return 1;
 }
 
@@ -437,7 +473,7 @@ SI col_type(lua_State *L) {
         LuaSQLiteStmt *s = check_stmt(1);
         int idx = luaL_checkinteger(L, 2);
         const char *name;
-        int t = sqlite3_column_type(s->stmt, idx - 1);
+        int t = sqlite3_column_type(s->v, idx - 1);
         switch (t) {
         case SQLITE_INTEGER: name = "integer"; break;
         case SQLITE_FLOAT: name = "float"; break;

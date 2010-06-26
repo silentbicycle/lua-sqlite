@@ -25,6 +25,9 @@ zip:
 		> ${ARCHNAME}-${LIBVER}.zip
 
 
+gdb:
+	gdb `which lua` lua.core
+
 install: ${LIBFILE}
 	cp ${INST_LIB} ${LUA_DEST_LIB}
 	cd ${LUA_DEST_LIB} && ln -s ${INST_LIB} ${LIBNAME}${LIBEXT}
