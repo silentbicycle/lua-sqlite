@@ -18,35 +18,37 @@ SI ver_num(lua_State *L) { lua_pushinteger(L, sqlite3_libversion_number()); retu
 SI pushres(lua_State *L, int res) {
         const char *s;
         switch (res) {
-        case SQLITE_OK: s = "ok"; break;       /* Successful result */
-        case SQLITE_ERROR: s = "error"; break; /* SQL error or missing database */
-        case SQLITE_INTERNAL: s = "internal"; break; /* Internal logic error in SQLite */
-        case SQLITE_PERM: s = "perm"; break;   /* Access permission denied */
-        case SQLITE_ABORT: s = "abort"; break; /* Callback routine requested an abort */
-        case SQLITE_BUSY: s = "busy"; break;   /* The database file is locked */
-        case SQLITE_LOCKED: s = "locked"; break; /* A table in the database is locked */
-        case SQLITE_NOMEM: s = "nomem"; break; /* A malloc() failed */
-        case SQLITE_READONLY: s = "readonly"; break; /* Attempt to write a readonly database */
-        case SQLITE_INTERRUPT: s = "interrupt"; break; /* Operation terminated by sqlite3_interrupt()*/
-        case SQLITE_IOERR: s = "ioerr"; break; /* Some kind of disk I/O error occurred */
-        case SQLITE_CORRUPT: s = "corrupt"; break; /* The database disk image is malformed */
-        case SQLITE_NOTFOUND: s = "notfound"; break; /* NOT USED. Table or record not found */
-        case SQLITE_FULL: s = "full"; break;   /* Insertion failed because database is full */
-        case SQLITE_CANTOPEN: s = "cantopen"; break; /* Unable to open the database file */
-        case SQLITE_PROTOCOL: s = "protocol"; break; /* NOT USED. Database lock protocol error */
-        case SQLITE_EMPTY: s = "empty"; break; /* Database is empty */
-        case SQLITE_SCHEMA: s = "schema"; break; /* The database schema changed */
-        case SQLITE_TOOBIG: s = "toobig"; break; /* String or BLOB exceeds size limit */
-        case SQLITE_CONSTRAINT: s = "constraint"; break; /* Abort due to constraint violation */
-        case SQLITE_MISMATCH: s = "mismatch"; break; /* Data type mismatch */
-        case SQLITE_MISUSE: s = "misuse"; break; /* Library used incorrectly */
-        case SQLITE_NOLFS: s = "nolfs"; break; /* Uses OS features not supported on host */
-        case SQLITE_AUTH: s = "auth"; break;   /* Authorization denied */
-        case SQLITE_FORMAT: s = "format"; break; /* Auxiliary database format error */
-        case SQLITE_RANGE: s = "range"; break; /* 2nd parameter to sqlite3_bind out of range */
-        case SQLITE_NOTADB: s = "notadb"; break; /* File opened that is not a database file */
-        case SQLITE_ROW: s = "row"; break;     /* sqlite3_step() has another row ready */
-        case SQLITE_DONE: s = "done"; break;   /* sqlite3_step() has finished executing */
+#define R(str) s = str; break
+        case SQLITE_OK: R("ok");            /* Successful result */
+        case SQLITE_ERROR: R("error");      /* SQL error or missing database */
+        case SQLITE_INTERNAL: R("internal");/* Internal logic error in SQLite */
+        case SQLITE_PERM: R("perm");        /* Access permission denied */
+        case SQLITE_ABORT: R("abort");      /* Callback routine requested an abort */
+        case SQLITE_BUSY: R("busy");        /* The database file is locked */
+        case SQLITE_LOCKED: R("locked");    /* A table in the database is locked */
+        case SQLITE_NOMEM: R("nomem");      /* A malloc() failed */
+        case SQLITE_READONLY: R("readonly");/* Attempt to write a readonly database */
+        case SQLITE_INTERRUPT: R("interrupt"); /* Operation terminated by sqlite3_interrupt()*/
+        case SQLITE_IOERR: R("ioerr");      /* Some kind of disk I/O error occurred */
+        case SQLITE_CORRUPT: R("corrupt");  /* The database disk image is malformed */
+        case SQLITE_NOTFOUND: R("notfound");/* NOT USED. Table or record not found */
+        case SQLITE_FULL: R("full");        /* Insertion failed because database is full */
+        case SQLITE_CANTOPEN: R("cantopen");/* Unable to open the database file */
+        case SQLITE_PROTOCOL: R("protocol");/* NOT USED. Database lock protocol error */
+        case SQLITE_EMPTY: R("empty");      /* Database is empty */
+        case SQLITE_SCHEMA: R("schema");    /* The database schema changed */
+        case SQLITE_TOOBIG: R("toobig");    /* String or BLOB exceeds size limit */
+        case SQLITE_CONSTRAINT: R("constraint"); /* Abort due to constraint violation */
+        case SQLITE_MISMATCH: R("mismatch");/* Data type mismatch */
+        case SQLITE_MISUSE: R("misuse");    /* Library used incorrectly */
+        case SQLITE_NOLFS: R("nolfs");      /* Uses OS features not supported on host */
+        case SQLITE_AUTH: R("auth");        /* Authorization denied */
+        case SQLITE_FORMAT: R("format");    /* Auxiliary database format error */
+        case SQLITE_RANGE: R("range");      /* 2nd parameter to sqlite3_bind out of range */
+        case SQLITE_NOTADB: R("notadb");    /* File opened that is not a database file */
+        case SQLITE_ROW: R("row");          /* sqlite3_step() has another row ready */
+        case SQLITE_DONE: R("done");        /* sqlite3_step() has finished executing */
+#undef R
         default: s = "unknown"; break;
         }
         lua_pushstring(L, s);
@@ -142,8 +144,7 @@ SI exec(lua_State *L) {
         if (top == 3 && lua_type(L, 3) == LUA_TFUNCTION) cb = exec_cb;
 
         res = sqlite3_exec(ldb->v, sql, cb, (void*)L, &err);
-        if (err != NULL) printf("ERR: %s", err);
-        printf("RES is %d\n", res);
+        if (res != SQLITE_OK) LERROR(err);
         return pushres(L, res);
 }
 
@@ -151,14 +152,14 @@ SI get_table(lua_State *L) {
         LuaSQLite *ldb = check_db(1);
         const char *sql = luaL_checkstring(L, 2);
         lua_pop(L, 2);
-        char ***qres;
+        char **qres;
         int nrow, ncol;
         char *err;
         int row, res;
-        char *cells;
-        res = sqlite3_get_table(ldb->v, sql, qres, &nrow, &ncol, &err);
+        char **cells;
+        res = sqlite3_get_table(ldb->v, sql, &qres, &nrow, &ncol, &err);
         if (res != SQLITE_OK) {
-                sqlite3_free_table(*qres);
+                sqlite3_free_table(qres);
                 lua_pushstring(L, err);
                 lua_error(L);
         }
@@ -167,8 +168,7 @@ SI get_table(lua_State *L) {
         lua_createtable(L, nrow, 0);
         if (DEBUG) printf("nrow=%d, ncol=%d\n", nrow, ncol);
         for (row=0; row <= nrow; row++) {
-                /*cell = qres[0][ncol*row + col];*/
-                cells = qres[0] + (ncol * row);
+                cells = qres + (ncol * row);
                 push_cell_table(L, ncol, cells);
 
                 if (row == 0)
@@ -179,7 +179,7 @@ SI get_table(lua_State *L) {
                 lua_settable(L, -3);
         }
 
-        sqlite3_free_table(*qres);
+        sqlite3_free_table(qres);
         pushres(L, res);
         lua_insert(L, -2);
         return 2;
@@ -212,16 +212,16 @@ SI prepare(lua_State *L) {
         size_t len;
         sqlite3_stmt *stmt;
         LuaSQLiteStmt *lstmt;
-        const char **tail;
+        const char *tail;
         const char *sql = luaL_checklstring(L, 2, &len);
-        int res = sqlite3_prepare_v2(ldb->v, sql, len, &stmt, tail);
+        int res = sqlite3_prepare_v2(ldb->v, sql, len, &stmt, &tail);
 
         if (res == SQLITE_OK) {
                 lstmt = (LuaSQLiteStmt *)lua_newuserdata(L, sizeof(LuaSQLiteStmt *));
                 lstmt->v = stmt;
                 luaL_getmetatable(L, "LuaSQLiteStmt");
                 lua_setmetatable(L, -2);
-                lua_pushstring(L, *tail);
+                lua_pushstring(L, tail);
                 return 2;
         } else {
                 LERROR(sqlite3_errmsg(ldb->v));
