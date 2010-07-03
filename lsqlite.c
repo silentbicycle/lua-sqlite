@@ -1,5 +1,6 @@
 #include <stdlib.h>
 #include <stdio.h>
+#include <string.h>
 
 #include <lua.h>
 #include <lauxlib.h>
@@ -10,6 +11,13 @@
 
 #define SI static int
 #define DEBUG 0
+
+/* TODO:
+ * * Handling lock/busy states.
+ * * Extension API.
+ * * Other iterators.
+ * * Thorough testing.
+ * */
 
 SI ver(lua_State *L) { lua_pushstring(L, sqlite3_libversion()); return 1; }
 SI ver_num(lua_State *L) { lua_pushinteger(L, sqlite3_libversion_number()); return 1; }
@@ -229,7 +237,7 @@ SI prepare(lua_State *L) {
         }
 }
 
-SI step(lua_State *L) {
+SI stmt_step(lua_State *L) {
         LuaSQLiteStmt *s = check_stmt(1);
         return pushres(L, sqlite3_step(s->v));
 }
@@ -239,7 +247,7 @@ SI stmt_gc(lua_State *L) {
         return pushres(L, sqlite3_finalize(s->v));
 }
 
-SI reset(lua_State *L) {
+SI stmt_reset(lua_State *L) {
         LuaSQLiteStmt *s = check_stmt(1);
         return pushres(L, sqlite3_reset(s->v));
 }
@@ -343,7 +351,7 @@ SI bind_table(lua_State *L, LuaSQLiteStmt *s) {
         return 1;
 }
 
-SI bind(lua_State *L) {
+SI stmt_bind(lua_State *L) {
         LuaSQLiteStmt *s = check_stmt(1);
         int i;
         if (lua_type(L, 2) == LUA_TTABLE) return bind_table(L, s);
@@ -393,50 +401,121 @@ SI bind_text(lua_State *L) {
 /* sqlite3_value *sqlite3_column_value(sqlite3_stmt*, int iCol); */
 
 
+static void push_col(lua_State *L, sqlite3_stmt *stmt, int i, char t) {
+        double d;
+        int n;
+        const char *c;
+        size_t tlen;
+        switch (t) {
+        case 'i':       /* int */
+                n = sqlite3_column_int(stmt, i);
+                lua_pushinteger(L, n);
+                break;
+        case 'f':       /* float */
+                d = sqlite3_column_double(stmt, i);
+                lua_pushnumber(L, d);
+                break;
+        case 't':       /* text */
+                tlen = sqlite3_column_bytes(stmt, i);
+                c = sqlite3_column_text(stmt, i);
+                lua_pushlstring(L, c, tlen);
+                break;
+        case 'b':       /* blob */
+                tlen = sqlite3_column_bytes(stmt, i);
+                c = (const char*)sqlite3_column_blob(stmt, i);
+                lua_pushlstring(L, c, tlen);
+                break;
+        default:
+                lua_pushfstring(L, "Invalid column tag '%c' -- must be in 'iftb'", t);
+                lua_error(L);
+                break;
+        }
+}
+
 /* Higher level interface, e.g.
  * id, key, count, score = s:columns("itif") --int, text, int, float */
 SI columns(lua_State *L) {
         LuaSQLiteStmt *s = check_stmt(1);
-        size_t len, tlen;
+        size_t len;
+        int i;
         const char* cs = luaL_checklstring(L, 2, &len);
-        double d;
-        int i, n;
-        const char *t;
         
         int ct = sqlite3_column_count(s->v);
         if (len != ct) {
                 lua_pushfstring(L, "Invalid column count %d, result has %d columns", len, ct);
                 lua_error(L);
         }
-        for (i=0; i<len; i++) {
-                switch (cs[i]) {
-                case 'i':       /* int */
-                        n = sqlite3_column_int(s->v, i);
-                        lua_pushinteger(L, n);
-                        break;
-                case 'f':       /* float */
-                        d = sqlite3_column_double(s->v, i);
-                        lua_pushnumber(L, d);
-                        break;
-                case 't':       /* text */
-                        tlen = sqlite3_column_bytes(s->v, i);
-                        t = sqlite3_column_text(s->v, i);
-                        lua_pushlstring(L, t, tlen);
-                        break;
-                case 'b':       /* blob */
-                        tlen = sqlite3_column_bytes(s->v, i);
-                        t = (const char*)sqlite3_column_blob(s->v, i);
-                        lua_pushlstring(L, t, tlen);
-                        break;
-                default:
-                        lua_pushfstring(L, "Invalid column tag '%c' -- must be in 'iftb'",
-                            cs[i]);
-                        lua_error(L);
-                        break;
-                }
-        }
+        for (i=0; i<len; i++) push_col(L, s->v, i, cs[i]);
         
         return len;
+}
+
+/*
+column_iter = function(self, tag)
+      return function()
+                local status = s:step()
+                if status == "row" then
+                   return s:columns(tag)
+                elseif status == "done" then
+                   s:reset()
+                   return nil
+                else
+                   s:reset()
+                   error(sqlite3_errmsg(db))
+                end
+             end
+   end
+*/
+
+/* TODO
+ * check args:
+ * "*l" returns an iterator yielding a list of each row's columns
+ * "*t" returns a colname=colval table for each row
+ * any other string is treated as with columns(s), above
+ * 
+ * if the second argument is a function, it's mapped over each row,
+ * otherwise an iterator is returned.
+ * 
+ * use lua_pushcclosure to push a closure for the iterator.
+ *
+ * the iterator/mapper takes care of calling s:step(), checking its
+ * status, and calling s:reset() when complete.
+ * */
+SI row_iter(lua_State *L);      /* forward reference */
+
+
+SI rows(lua_State *L) {
+        LuaSQLiteStmt *s = check_stmt(1);
+        size_t len;
+        const char* cols = luaL_checklstring(L, 2, &len);
+        if (0) printf("(ignore 'unused vars' warning) %p, %s\n", s, cols);
+        if (strcmp(cols, "*l") == 0) {        /* value list */
+                LERROR("TODO");
+        } else if (strcmp(cols, "*t") == 0) { /* col_name=col_val table */
+                LERROR("TODO");
+        } else {
+                lua_pushcclosure(L, row_iter, 2);
+        }
+        return 1;
+}
+
+
+/* Upvalues: [stmt, cols] */
+SI row_iter(lua_State *L) {
+        LuaSQLiteStmt *s = check_stmt(lua_upvalueindex(1));
+        size_t len;
+        const char* cols = luaL_checklstring(L, lua_upvalueindex(2), &len);
+        int i;
+
+        int status = sqlite3_step(s->v);
+        if (status == SQLITE_ROW) {
+                for (i=0; i<len; i++) push_col(L, s->v, i, cols[i]);
+                return len;
+        } else {
+                sqlite3_reset(s->v);
+                if (status != SQLITE_DONE) { pushres(L, status); lua_error(L); }
+                return 0;
+        }
 }
 
 SI col_double(lua_State *L) {
@@ -530,9 +609,9 @@ LIB(db_mt) = {
 };
 
 LIB(stmt_mt) = {
-        { "step", step },
-        { "reset", reset },
-        { "bind", bind },
+        { "step", stmt_step },
+        { "reset", stmt_reset },
+        { "bind", stmt_bind },
         { "bind_double", bind_double },
         { "bind_int", bind_int },
         { "bind_null", bind_null },
@@ -545,6 +624,7 @@ LIB(stmt_mt) = {
         { "column_type", col_type },
         { "column_count", col_count },
         { "columns", columns },
+        { "rows", rows },
         { "__tostring", stmt_tostring },
         { "__gc", stmt_gc },
         { NULL, NULL },

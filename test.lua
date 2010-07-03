@@ -48,11 +48,31 @@ print("reset:", s:reset())
 
 print "ok"
 
--- TODO implicitly wrap s:step(), checking result, and s:reset()
-if false then
-   for id, text, score in s:column_iter("itf") do
+-- FIXME add this to the C lib
+local mt = getmetatable(s)
+mt.column_iter =
+   function(self, tag)
+      return function()
+                local status = s:step()
+                if status == "row" then
+                   return s:columns(tag)
+                elseif status == "done" then
+                   s:reset()
+                   return nil
+                else
+                   s:reset()
+                   error(sqlite3_errmsg(db))
+                end
+             end
+   end
+
+
+if true then
+   print("----------------------------------------")
+   for id, text, score in s:rows("itf") do
       print(id, text, score)
    end
+   print("----------------------------------------")
 end
 
 print "ok"
@@ -81,4 +101,5 @@ local hook = function(colnames, cols)
 if true then
    print("EXEC", db:exec("SELECT * FROM foo;", hook))
 end
+
 print "DONE"
