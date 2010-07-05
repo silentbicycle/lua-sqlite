@@ -11,6 +11,7 @@
 
 #define SI static int
 #define DEBUG 0
+#define TRACE   if (DEBUG) printf
 
 /* TODO:
  * * Handling lock/busy states.
@@ -174,7 +175,7 @@ SI get_table(lua_State *L) {
 
         /* Make a table of rows, each of which is an array of column strings. */
         lua_createtable(L, nrow, 0);
-        if (DEBUG) printf("nrow=%d, ncol=%d\n", nrow, ncol);
+        TRACE("nrow=%d, ncol=%d\n", nrow, ncol);
         for (row=0; row <= nrow; row++) {
                 cells = qres + (ncol * row);
                 push_cell_table(L, ncol, cells);
@@ -292,7 +293,7 @@ SI bind_dtype(sqlite3_stmt *s, lua_State *L, int idx) {
         size_t len;
 
         t = lua_type(L, -1);
-        printf("Binding idx %d to type %d\n", idx, t);
+        TRACE("Binding idx %d to type %d\n", idx, t);
         switch (t) {
         case LUA_TNIL:
                 return pushres(L, sqlite3_bind_null(s, idx));
@@ -329,7 +330,7 @@ SI bind_table(lua_State *L, LuaSQLiteStmt *s) {
                                     lua_tostring(L, -1));
                                 lua_error(L);
                         }
-                        printf("Index is %d\n", idx);
+                        TRACE("Index is %d\n", idx);
                         lua_pop(L, 1);
                         bind_dtype(s->v, L, idx);
                         lua_pop(L, 1);
@@ -524,7 +525,10 @@ SI rows(lua_State *L) {
 /*         int hasfunc = (lua_type(L, 3) == LUA_TFUNCTION); */
         col_info *ci;
 
-        if (0) printf("(ignore 'unused vars' warning) %p, %s\n", s, cols);
+        if (0) {
+                dump(L);
+                printf("(ignore 'unused vars' warning) %p, %s\n", s, cols);
+        }
         if (strcmp(cols, "*l") == 0) {        /* value list */
                 lua_pop(L, 1);
                 ci = get_col_info(L, s->v);
@@ -566,7 +570,7 @@ static void get_col_types(sqlite3_stmt *stmt, col_info *ci) {
                 for (i=0; i < ci->ct; i++) {
                         ci->col[i].type = sqlite3_column_type(stmt, i);
                         ci->col[i].name = sqlite3_column_name(stmt, i);
-                        printf("col %d -> %d / %s\n",
+                        TRACE("col %d -> %d / %s\n",
                             i, ci->col[i].type, ci->col[i].name);
                 }
         }

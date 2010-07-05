@@ -1,115 +1,128 @@
+require "lunatest"
 require "sqlite"
 
-print("Version: ", sqlite.version())
-print("Version #: ", sqlite.version_number())
+print("SQLite Version: ", sqlite.version(), sqlite.version_number())
 
-db = sqlite.open()
-print(db)
 
-print("making table:", db:exec([[
+function setup(name)
+   db = sqlite.open()
+   assert(db:exec([[
 CREATE TABLE foo (
    id INTEGER PRIMARY KEY,
    t TEXT NOT NULL,
    s REAL NOT NULL);]]))
+end
 
-print "ok"
+local function step_and_reset(s)
+   assert_equal("done", s:step())
+   assert_equal("ok", s:reset())
+end
 
 -- Bind by s:bind(":key", value)
-local s = db:prepare("INSERT INTO foo (t, s) VALUES (:f, :s);")
-s:bind(":f", "balloonis")
-s:bind(":s", 1234.5)
-print "ok"
-print("step:", s:step())
-print("reset:", s:reset())
+function test_bind_imperative()
+   local s = db:prepare("INSERT INTO foo (t, s) VALUES (:f, :s);")
+   s:bind(":f", "balloonis")
+   s:bind(":s", 1234.5)
+   step_and_reset(s)
+end
 
 -- Bind by array of values
-s = db:prepare("INSERT INTO foo (t, s) VALUES (?, ?);")
-s:bind { "abba zabba", 9999.88888 }
-print("step:", s:step())
-print("reset:", s:reset())
-
-print "ok"
+function test_bind_array()
+   local s = db:prepare("INSERT INTO foo (t, s) VALUES (?, ?);")
+   s:bind { "abba zabba", 9999.88888 }
+   step_and_reset(s)
+end
 
 -- Bind by k=v table
-s = db:prepare("INSERT INTO foo (t, s) VALUES (:f, :s);")
-s:bind { f="malarkey", s=30949 }
-print("step:", s:step())
-print("reset:", s:reset())
-
-print "ok"
-
-s = db:prepare("SELECT * FROM foo;")
-while s:step() == "row" do
-   --for i=1,3 do print("column ", i, s:column_type(i), s:column_text(i)) end
-   print("Columns 'it':", s:columns("itf"))
-   
+function test_bind_table()
+   local s = db:prepare("INSERT INTO foo (t, s) VALUES (:f, :s);")
+   s:bind { f="malarkey", s=30949 }
+   step_and_reset(s)
 end
-print("reset:", s:reset())
 
-print "ok"
-
--- FIXME add this to the C lib
-local mt = getmetatable(s)
-mt.column_iter =
-   function(self, tag)
-      return function()
-                local status = s:step()
-                if status == "row" then
-                   return s:columns(tag)
-                elseif status == "done" then
-                   s:reset()
-                   return nil
-                else
-                   s:reset()
-                   error(sqlite3_errmsg(db))
-                end
-             end
+local function add_sample_data_1()
+   local s = db:prepare("INSERT INTO foo (t, s) VALUES (:f, :s);")
+   for _,row in ipairs{{"foo", 123},
+                       {"bar", 456},
+                       {"baz", 789}} do
+      s:bind { f=row[1], s=row[2] }
+      step_and_reset(s)
    end
+end
 
+function test_select()
+   add_sample_data_1()
+   local s = db:prepare("SELECT * FROM foo;")
+   while s:step() == "row" do
+      local id, t, f = s:columns("itf")
+      assert_number(id)
+      assert_string(t)
+      assert_number(f)
+   end   
+   assert_equal("ok", s:reset())
+end
 
-if true then
-   print("---------------------------------------- rows(itf)")
-   for id, text, score in s:rows("itf") do
-      print(id, text, score)
+function test_row_iter_multi()
+   add_sample_data_1()
+   local s = db:prepare("SELECT * FROM foo;")
+   for id, t, score in s:rows("itf") do
+      assert_number(id); assert_string(t); assert_number(score)
    end
-   print("---------------------------------------- rows(*l)")
+end
+
+function test_row_iter_list()
+   add_sample_data_1()
+   local s = db:prepare("SELECT * FROM foo;")
    for row in s:rows("*l") do
-      print(row)
-      my.dump(row)
+      assert_number(row[1]); assert_string(row[2]); assert_number(row[3])
    end
-   print("---------------------------------------- rows(*t)")
+end
+
+function test_row_iter_table()
+   add_sample_data_1()
+   local s = db:prepare("SELECT * FROM foo;")
    for row in s:rows("*t") do
-      print(row)
-      my.dump(row)
+      assert_number(row.id); assert_string(row.t); assert_number(row.s)
    end
-   print("----------------------------------------")
 end
 
-print "ok"
+function test_get_table()
+   add_sample_data_1()
+   local status, res = db:get_table("SELECT * FROM foo;")
+   assert_equal("ok", status)
+   assert_equal(3, #res)
+   -- (sqlite3_get_table returns every value as a string)
+   assert_equal("1", res[1][1])
+   assert_equal("bar", res[2][2])
+   assert_equal("baz", res[3][2])
+   assert_equal("789.0", res[3][3])
+end
 
-print "GET_TABLE test"
-ok, res = db:get_table("SELECT * FROM foo;")
-print("Status is ", ok)
-print("ok", ok, ok == "ok")
-if ok == "o" .. "k" then my.dump(res) end
-my.dump(res)
-
-print "ok"
-
-print "EXEC test"
-local first = true
-local hook = function(colnames, cols)
-                if false and first then
-                   local head = table.concat(colnames, " | ")
-                   print(head)
-                   print(("-"):rep(head:len()))
-                   first = false
+function test_exec1()
+   add_sample_data_1()
+   local first = true
+   local hook = function(colnames, cols)
+                   if first then
+                      local head = table.concat(colnames, " | ")
+                      print("\n" .. head)
+                      print(("-"):rep(head:len()))
+                      first = false
+                   end
+                   print(table.concat(cols, " | "))
                 end
-                --printf(table.concat(cols, " | "))  -- uncomment for an error
-                print(table.concat(cols, " | "))
-             end
-if true then
-   print("EXEC", db:exec("SELECT * FROM foo;", hook))
+   assert_equal("ok", db:exec("SELECT * FROM foo;", hook))
+   assert_false(first)
 end
 
-print "DONE"
+function test_exec_error()
+   add_sample_data_1()
+   local first = true
+   local hook = function(colnames, cols)
+                   error("bananas")
+                end
+   local ok, err = pcall(function() db:exec("SELECT * FROM foo;", hook) end)
+   assert_false(ok, "should catch the error")
+   assert_equal("callback requested query abort", err)
+end
+
+lunatest.run()
