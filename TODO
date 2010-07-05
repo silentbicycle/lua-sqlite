@@ -1,0 +1,15 @@
+-*- mode: outline; outline-regexp: " *[*+.-] "; -*-
+
+* Lua SQLite 3 wrapper
+ * Documentation
+ * Tests
+  + Test busy_handler
+  + Tests from other SQLite wrappers
+ * Extension API
+  + create_function
+ * Hooks
+  + TODO commit
+  + TODO rollback
+  + TODO progress
+  + TODO update
+ * TODO Blobs

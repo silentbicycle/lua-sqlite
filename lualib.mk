@@ -8,7 +8,6 @@ clean:
 ${LIBFILE}: ${LIBPREFIX}${LIBNAME}.c
 	${CC} -o $@ $> ${CFLAGS} ${SHARED} ${LUA_FLAGS} \
 	${INC} ${LIB_PATHS} ${LIBS}
-	ln -fs ${LIBNAME}${LIBEXT}.${LIBVER} ${LIBNAME}${LIBEXT}
 
 test: ${LIBFILE}
 	${LUA} ${TESTSUITE}

@@ -18,6 +18,11 @@ local function step_and_reset(s)
    assert_equal("ok", s:reset())
 end
 
+
+-------------
+-- Binding --
+-------------
+
 -- Bind by s:bind(":key", value)
 function test_bind_imperative()
    local s = db:prepare("INSERT INTO foo (t, s) VALUES (:f, :s);")
@@ -39,6 +44,11 @@ function test_bind_table()
    s:bind { f="malarkey", s=30949 }
    step_and_reset(s)
 end
+
+
+------------------
+-- Getting rows --
+------------------
 
 local function add_sample_data_1()
    local s = db:prepare("INSERT INTO foo (t, s) VALUES (:f, :s);")
@@ -86,6 +96,11 @@ function test_row_iter_table()
    end
 end
 
+
+---------------
+-- Get_table --
+---------------
+
 function test_get_table()
    add_sample_data_1()
    local status, res = db:get_table("SELECT * FROM foo;")
@@ -97,6 +112,11 @@ function test_get_table()
    assert_equal("baz", res[3][2])
    assert_equal("789.0", res[3][3])
 end
+
+
+----------------------
+-- exec() and hooks --
+----------------------
 
 function test_exec1()
    add_sample_data_1()
@@ -124,5 +144,34 @@ function test_exec_error()
    assert_false(ok, "should catch the error")
    assert_equal("callback requested query abort", err)
 end
+
+
+--------------------
+-- Error handling --
+--------------------
+
+function test_error_constraint()
+   local s = db:prepare("INSERT INTO foo (t, s) VALUES (:f, :s);")
+   s:bind { f="foo", s=nil }
+   local status, err = s:step()
+   assert_false(status)
+   assert_equal("constraint", err)
+end
+
+
+-----------------
+-- Busy status --
+-----------------
+
+function test_busy_timeout()
+   assert_equal("ok", db:set_busy_timeout(30))
+end
+
+function test_busy_handler()
+   -- TODO: make SQLite call the callback
+   local status, err = db:set_busy_handler(function(ct) error("AAAAH") end)
+   assert_equal("ok", status)
+end
+
 
 lunatest.run()

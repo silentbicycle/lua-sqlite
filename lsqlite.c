@@ -13,12 +13,6 @@
 #define DEBUG 0
 #define TRACE   if (DEBUG) printf
 
-/* TODO:
- * * Handling lock/busy states.
- * * Extension API.
- * * Other iterators.
- * * Thorough testing.
- * */
 
 SI ver(lua_State *L) { lua_pushstring(L, sqlite3_libversion()); return 1; }
 SI ver_num(lua_State *L) { lua_pushinteger(L, sqlite3_libversion_number()); return 1; }
@@ -27,41 +21,46 @@ SI ver_num(lua_State *L) { lua_pushinteger(L, sqlite3_libversion_number()); retu
 SI pushres(lua_State *L, int res) {
         const char *s;
         switch (res) {
-#define R(str) s = str; break
-        case SQLITE_OK: R("ok");            /* Successful result */
-        case SQLITE_ERROR: R("error");      /* SQL error or missing database */
-        case SQLITE_INTERNAL: R("internal");/* Internal logic error in SQLite */
-        case SQLITE_PERM: R("perm");        /* Access permission denied */
-        case SQLITE_ABORT: R("abort");      /* Callback routine requested an abort */
-        case SQLITE_BUSY: R("busy");        /* The database file is locked */
-        case SQLITE_LOCKED: R("locked");    /* A table in the database is locked */
-        case SQLITE_NOMEM: R("nomem");      /* A malloc() failed */
-        case SQLITE_READONLY: R("readonly");/* Attempt to write a readonly database */
-        case SQLITE_INTERRUPT: R("interrupt"); /* Operation terminated by sqlite3_interrupt()*/
-        case SQLITE_IOERR: R("ioerr");      /* Some kind of disk I/O error occurred */
-        case SQLITE_CORRUPT: R("corrupt");  /* The database disk image is malformed */
-        case SQLITE_NOTFOUND: R("notfound");/* NOT USED. Table or record not found */
-        case SQLITE_FULL: R("full");        /* Insertion failed because database is full */
-        case SQLITE_CANTOPEN: R("cantopen");/* Unable to open the database file */
-        case SQLITE_PROTOCOL: R("protocol");/* NOT USED. Database lock protocol error */
-        case SQLITE_EMPTY: R("empty");      /* Database is empty */
-        case SQLITE_SCHEMA: R("schema");    /* The database schema changed */
-        case SQLITE_TOOBIG: R("toobig");    /* String or BLOB exceeds size limit */
-        case SQLITE_CONSTRAINT: R("constraint"); /* Abort due to constraint violation */
-        case SQLITE_MISMATCH: R("mismatch");/* Data type mismatch */
-        case SQLITE_MISUSE: R("misuse");    /* Library used incorrectly */
-        case SQLITE_NOLFS: R("nolfs");      /* Uses OS features not supported on host */
-        case SQLITE_AUTH: R("auth");        /* Authorization denied */
-        case SQLITE_FORMAT: R("format");    /* Auxiliary database format error */
-        case SQLITE_RANGE: R("range");      /* 2nd parameter to sqlite3_bind out of range */
-        case SQLITE_NOTADB: R("notadb");    /* File opened that is not a database file */
-        case SQLITE_ROW: R("row");          /* sqlite3_step() has another row ready */
-        case SQLITE_DONE: R("done");        /* sqlite3_step() has finished executing */
-#undef R
+#define RS(str) lua_pushstring(L, str); return 1;   /* result: success */
+        /* Success cases */
+        case SQLITE_OK: RS("ok");           /* Successful result */
+        case SQLITE_ROW: RS("row");         /* sqlite3_step() has another row ready */
+        case SQLITE_DONE: RS("done");       /* sqlite3_step() has finished executing */
+#undef RS
+#define RF(str) s = str; break                      /* result: failure */
+        /* Failure cases */
+        case SQLITE_ERROR: RF("error");     /* SQL error or missing database */
+        case SQLITE_INTERNAL: RF("internal");/* Internal logic error in SQLite */
+        case SQLITE_PERM: RF("perm");       /* Access permission denied */
+        case SQLITE_ABORT: RF("abort");     /* Callback routine requested an abort */
+        case SQLITE_BUSY: RF("busy");       /* The database file is locked */
+        case SQLITE_LOCKED: RF("locked");   /* A table in the database is locked */
+        case SQLITE_NOMEM: RF("nomem");     /* A malloc() failed */
+        case SQLITE_READONLY: RF("readonly");/* Attempt to write a readonly database */
+        case SQLITE_INTERRUPT: RF("interrupt"); /* Operation terminated by sqlite3_interrupt()*/
+        case SQLITE_IOERR: RF("ioerr");     /* Some kind of disk I/O error occurred */
+        case SQLITE_CORRUPT: RF("corrupt"); /* The database disk image is malformed */
+        case SQLITE_NOTFOUND: RF("notfound");/* NOT USED. Table or record not found */
+        case SQLITE_FULL: RF("full");       /* Insertion failed because database is full */
+        case SQLITE_CANTOPEN: RF("cantopen");/* Unable to open the database file */
+        case SQLITE_PROTOCOL: RF("protocol");/* NOT USED. Database lock protocol error */
+        case SQLITE_EMPTY: RF("empty");     /* Database is empty */
+        case SQLITE_SCHEMA: RF("schema");   /* The database schema changed */
+        case SQLITE_TOOBIG: RF("toobig");   /* String or BLOB exceeds size limit */
+        case SQLITE_CONSTRAINT: RF("constraint"); /* Abort due to constraint violation */
+        case SQLITE_MISMATCH: RF("mismatch");/* Data type mismatch */
+        case SQLITE_MISUSE: RF("misuse");   /* Library used incorrectly */
+        case SQLITE_NOLFS: RF("nolfs");     /* Uses OS features not supported on host */
+        case SQLITE_AUTH: RF("auth");       /* Authorization denied */
+        case SQLITE_FORMAT: RF("format");   /* Auxiliary database format error */
+        case SQLITE_RANGE: RF("range");     /* 2nd parameter to sqlite3_bind out of range */
+        case SQLITE_NOTADB: RF("notadb");   /* File opened that is not a database file */
+#undef RF
         default: s = "unknown"; break;
         }
+        lua_pushboolean(L, 0);
         lua_pushstring(L, s);
-        return 1;
+        return 2;
 }
 
 
@@ -69,12 +68,9 @@ SI pushres(lua_State *L, int res) {
 /* Database */
 /************/
 
-SI open(lua_State *L) {
-        size_t len;
-        const char *fn = luaL_optlstring(L, 1, ":memory:", &len);
+static int open_db(lua_State *L, const char *fn) {
         sqlite3 *db;
         LuaSQLite *ldb;
-        
         int res = sqlite3_open(fn, &db);
         if (res == SQLITE_OK) {
                 ldb = (LuaSQLite *)lua_newuserdata(L, sizeof(LuaSQLite));
@@ -88,11 +84,26 @@ SI open(lua_State *L) {
         }
 }
 
+SI open(lua_State *L) {
+        size_t len;
+        const char *fn = luaL_optlstring(L, 1, ":memory:", &len);
+        return open_db(L, fn);
+}
+
+SI open_memory(lua_State *L) {
+        return open_db(L, ":memory:");
+}
+
 SI close(lua_State *L) {
         LuaSQLite *ldb = check_db(1);
         return pushres(L, sqlite3_close(ldb->v));
 }
 
+SI interrupt(lua_State *L) {
+        LuaSQLite *ldb = check_db(1);
+        sqlite3_interrupt(ldb->v);
+        return 0;
+}
 SI db_tostring(lua_State *L) {
         LuaSQLite *ldb = check_db(1);
         lua_pushfstring(L, "SQLite db: %p", ldb->v);
@@ -104,6 +115,31 @@ SI db_gc(lua_State *L) {
         sqlite3_close(ldb->v);
         return 0;
 }
+
+static void dump(lua_State *L) {
+        int i;
+        for (i=1; i<=lua_gettop(L); i++)
+                printf(" -- %d -> %s (%s)\n",
+                    i, lua_tostring(L, i), lua_typename(L, lua_type(L, i)));
+
+}
+
+SI changes(lua_State *L) {
+        LuaSQLite *ldb = check_db(1);
+        lua_pushinteger(L, sqlite3_changes(ldb->v));
+        return 1;
+}
+
+SI last_insert_rowid(lua_State *L) {
+        LuaSQLite *ldb = check_db(1);
+        lua_pushinteger(L, sqlite3_last_insert_rowid(ldb->v));
+        return 1;
+}
+
+
+/********/
+/* Exec */
+/********/
 
 static void push_cell_table(lua_State *L, int len, char** cells) {
         int i;
@@ -119,14 +155,6 @@ static void push_cell_table(lua_State *L, int len, char** cells) {
                 lua_insert(L, -2);
                 lua_settable(L, -3);
         }
-}
-
-static void dump(lua_State *L) {
-        int i;
-        for (i=1; i<=lua_gettop(L); i++)
-                printf(" -- %d -> %s (%s)\n",
-                    i, lua_tostring(L, i), lua_typename(L, lua_type(L, i)));
-
 }
 
 /* Wrapper to call optional Lua callback. Called once per row. */
@@ -156,6 +184,11 @@ SI exec(lua_State *L) {
         if (res != SQLITE_OK) LERROR(err);
         return pushres(L, res);
 }
+
+
+/*************/
+/* get_table */
+/*************/
 
 SI get_table(lua_State *L) {
         LuaSQLite *ldb = check_db(1);
@@ -259,6 +292,11 @@ SI stmt_tostring(lua_State *L) {
         return 1;
 }
 
+SI stmt_sql(lua_State *L) {
+        LuaSQLiteStmt *lstmt = check_stmt(1);
+        lua_pushstring(L, sqlite3_sql(lstmt->v));
+        return 1;
+}
 
 /***********************/
 /* Columns and binding */
@@ -308,7 +346,7 @@ SI bind_dtype(sqlite3_stmt *s, lua_State *L, int idx) {
         default: LERROR("Cannot bind type");
         }
         return 0;
-        
+
 }
 
 /* Take a k=v table and call bind(":" .. k, v) for each.
@@ -366,6 +404,11 @@ SI bind_param_count(lua_State *L) {
         return sqlite3_bind_parameter_count(s->v);
 }
 
+SI bind_clear(lua_State *L) {
+        LuaSQLiteStmt *s = check_stmt(1);
+        return pushres(L, sqlite3_clear_bindings(s->v));
+}
+
 SI bind_double(lua_State *L) {
         LuaSQLiteStmt *s = check_stmt(1);
         int i = param_idx(L, s->v, 2);
@@ -394,13 +437,13 @@ SI bind_text(lua_State *L) {
         return pushres(L, sqlite3_bind_text(s->v, i, v, len, SQLITE_TRANSIENT));
 }
 
+
 /* const void *sqlite3_column_blob(sqlite3_stmt*, int iCol); */
 /* int sqlite3_column_bytes(sqlite3_stmt*, int iCol); */
 /* int sqlite3_column_bytes16(sqlite3_stmt*, int iCol); */
 /* sqlite3_int64 sqlite3_column_int64(sqlite3_stmt*, int iCol); */
 /* const void *sqlite3_column_text16(sqlite3_stmt*, int iCol); */
 /* sqlite3_value *sqlite3_column_value(sqlite3_stmt*, int iCol); */
-
 
 static int sqltype_of_char(lua_State *L, char c) {
         switch (c) {
@@ -458,38 +501,21 @@ SI columns(lua_State *L) {
         size_t len;
         int i;
         const char* cs = luaL_checklstring(L, 2, &len);
-        
+
         int ct = sqlite3_column_count(s->v);
         if (len != ct) {
                 lua_pushfstring(L, "Invalid column count %d, result has %d columns", len, ct);
                 lua_error(L);
         }
         for (i=0; i<len; i++) push_col(L, s->v, i, sqltype_of_char(L, cs[i]));
-        
+
         return len;
 }
 
-/* TODO
- * check args:
- * "*l" returns an iterator yielding a list of each row's columns
- * "*t" returns a colname=colval table for each row
- * any other string is treated as with columns(s), above
- * 
- * if the second argument is a function, it's mapped over each row,
- * otherwise an iterator is returned. If the function returns a
- * non-true value, the iteration is considered complete and it
- * resets the statement.
- * 
- * use lua_pushcclosure to push a closure for the iterator.
- *
- * the iterator/mapper takes care of calling s:step(), checking its
- * status, and calling s:reset() when complete.
- * */
 /* forward references */
 SI row_iter(lua_State *L);
 SI row_iter_list(lua_State *L);
 SI row_iter_table(lua_State *L);
-
 
 struct column {
         int type;  /* SQLITE_INTEGER, FLOAT, TEXT, BLOB, or NULL */
@@ -516,6 +542,22 @@ static col_info *get_col_info(lua_State *L, sqlite3_stmt *s) {
         return ci;
 }
 
+/*
+ * High-level statement result interface, returns an iterator.
+ * First argument:
+ *   "*l" returns an iterator yielding a list of each row's columns
+ *   "*t" returns a col_name=col_val table for each row
+ *   any other string is treated as with columns(s), above.
+ *
+ * Optional second argument (TODO): 
+ * If the second argument is a function, it's mapped over each row,
+ * otherwise the iterator is returned. If the function returns a
+ * non-true value, the iteration is considered complete and it
+ * resets the statement.
+ *
+ * The iterator/mapper take care of calling s:step(), checking its
+ * status, and calling s:reset() when complete.
+ */
 SI rows(lua_State *L) {
         LuaSQLiteStmt *s = check_stmt(1);
         size_t len;
@@ -659,12 +701,9 @@ SI col_count(lua_State *L) {
         return 1;
 }
 
-SI col_type(lua_State *L) {
-        LuaSQLiteStmt *s = check_stmt(1);
-        int idx = luaL_checkinteger(L, 2);
+SI col_typestr(lua_State *L, int type) {
         const char *name;
-        int t = sqlite3_column_type(s->v, idx - 1);
-        switch (t) {
+        switch (type) {
         case SQLITE_INTEGER: name = "integer"; break;
         case SQLITE_FLOAT: name = "float"; break;
         case SQLITE_TEXT: name = "text"; break;
@@ -676,13 +715,102 @@ SI col_type(lua_State *L) {
         return 1;
 }
 
+SI col_type(lua_State *L) {
+        LuaSQLiteStmt *s = check_stmt(1);
+        int idx = luaL_checkinteger(L, 2);
+        int t = sqlite3_column_type(s->v, idx - 1);
+        return col_typestr(L, t);
+}
+
+SI col_decltype(lua_State *L) {
+        LuaSQLiteStmt *s = check_stmt(1);
+        int idx = luaL_checkinteger(L, 2);
+        const char *t = sqlite3_column_decltype(s->v, idx - 1);
+        lua_pushstring(L, t);
+        return 1;
+}
+
+SI column_database_name(lua_State *L) {
+        LuaSQLiteStmt *s = check_stmt(1);
+        int col = luaL_checkinteger(L, 2);
+        const char *name = sqlite3_column_database_name(s->v, col);
+        lua_pushstring(L, name);
+        return 1;
+}
+
+SI column_table_name(lua_State *L) {
+        LuaSQLiteStmt *s = check_stmt(1);
+        int col = luaL_checkinteger(L, 2);
+        const char *name = sqlite3_column_table_name(s->v, col);
+        lua_pushstring(L, name);
+        return 1;
+}
+
+SI column_origin_name(lua_State *L) {
+        LuaSQLiteStmt *s = check_stmt(1);
+        int col = luaL_checkinteger(L, 2);
+        const char *name = sqlite3_column_origin_name(s->v, col);
+        lua_pushstring(L, name);
+        return 1;
+}
+
+/*********/
+/* Hooks */
+/*********/
+
+/* int sqlite3_busy_handler(sqlite3*, int(*)(void*,int), void*); */
+SI busy_cb(void *ud, int callCt) {
+        lua_State *L = (lua_State *) ud;
+        int res;
+        assert(L);
+        lua_pushlightuserdata(L, L); /* should be per DB, not per VM */
+        lua_gettable(L, LUA_REGISTRYINDEX);
+        if (!lua_isfunction(L, -1)) {
+                lua_pop(L, 1);
+                lua_pushstring(L, "No callback function");
+                lua_error(L);
+                return -1;
+        }
+        lua_pushinteger(L, callCt);
+        lua_pcall(L, 1, 1, 0);
+        res = luaL_checkinteger(L, -1);
+        return res;
+}
+
+/* static int set_busy_handler */
+SI set_busy_handler(lua_State *L) {
+        LuaSQLite *db = check_db(1);
+        if (lua_isfunction(L, 2)) {
+                lua_pushlightuserdata(L, L);
+                lua_settable(L, LUA_REGISTRYINDEX);
+                return pushres(L, sqlite3_busy_handler(db->v, &busy_cb, L));
+        } else {
+                LERROR("set_busy_handler needs function");
+                return 0;
+        }
+}
+
+SI set_busy_timeout(lua_State *L) {
+        LuaSQLite *db = check_db(1);
+        int ms = luaL_checkinteger(L, 2);
+        return pushres(L, sqlite3_busy_timeout(db->v, ms));
+}
+
+/* void *sqlite3_commit_hook(sqlite3*, int(*)(void*), void*); */
+/* void *sqlite3_rollback_hook(sqlite3*, void(*)(void *), void*); */
+/* void sqlite3_progress_handler(sqlite3*, int, int(*)(void*), void*); */
+
+/* void *sqlite3_update_hook( */
+/*   sqlite3*,  */
+/*   void(*)(void *,int ,char const *,char const *,sqlite3_int64), */
+/*   void* */
+/* ); */
 
 /*************/
 /* Extension */
 /*************/
 
 /*     * sqlite3_create_collation() */
-/*     * sqlite3_create_function() */
 /*     * sqlite3_create_module() */
 /*     * sqlite3_aggregate_context() */
 /*     * sqlite3_result() */
@@ -690,23 +818,41 @@ SI col_type(lua_State *L) {
 /*     * sqlite3_value() */
 
 
+/* int sqlite3_create_function( */
+/*   sqlite3 *db, */
+/*   const char *zFunctionName, */
+/*   int nArg, */
+/*   int eTextRep, */
+/*   void *pApp, */
+/*   void (*xFunc)(sqlite3_context*,int,sqlite3_value**), */
+/*   void (*xStep)(sqlite3_context*,int,sqlite3_value**), */
+/*   void (*xFinal)(sqlite3_context*) */
+/* ); */
+
+
 /*********/
 /* Blobs */
 /*********/
 
 
-/**********/
-/* Module */
-/**********/
+/********/
+/* Misc */
+/********/
 
-/**************/
-/* Metatables */
-/**************/
+/* sqlite3_int64 sqlite3_memory_used(void); */
+/* sqlite3_int64 sqlite3_memory_highwater(int resetFlag); */
 
-#define LIB(name) static const struct luaL_Reg name[]
+SI sleep(lua_State *L) {
+        int ms = luaL_checkinteger(L, 1);
+        return pushres(L, sqlite3_sleep(ms));
+}
+
+
+/*************************/
+/* Module and metatables */
+/*************************/
 
 /* General database connection. */
-/*static const struct luaL_Reg sqlite_mt[] = { */
 LIB(db_mt) = {
         { "exec", exec },
         { "get_table", get_table },
@@ -714,6 +860,11 @@ LIB(db_mt) = {
         { "errmsg", errmsg },
         { "prepare", prepare },
         { "close", close },
+        { "interrupt", interrupt },
+        { "changes", changes },
+        { "set_busy_handler", set_busy_handler },
+        { "set_busy_timeout", set_busy_timeout },
+        { "last_insert_rowid", last_insert_rowid },
         { "__tostring", db_tostring },
         { "__gc", db_gc },
         { NULL, NULL },
@@ -729,13 +880,19 @@ LIB(stmt_mt) = {
         { "bind_text", bind_text },
         { "bind_param_count", bind_param_count },
         { "bind_param_index", bind_param_idx },
+        { "clear", bind_clear },
         { "column_double", col_double },
         { "column_int", col_int },
         { "column_text", col_text },
         { "column_type", col_type },
+        { "column_decltype", col_decltype },
         { "column_count", col_count },
         { "columns", columns },
         { "rows", rows },
+        { "sql", stmt_sql },
+        { "database_name", column_database_name },
+        { "table_name", column_table_name },
+        { "origin_name", column_origin_name },
         { "__tostring", stmt_tostring },
         { "__gc", stmt_gc },
         { NULL, NULL },
@@ -747,18 +904,12 @@ LIB(stmt_mt) = {
 
 LIB(sqlite_lib) = {
         { "open", open },
+        { "open_memory", open_memory },
         { "version", ver },
         { "version_number", ver_num },
+        { "sleep", sleep },
         { NULL, NULL },
 };
-
-#define set_MT(mt, t) \
-        luaL_newmetatable(L, mt);       \
-        lua_pushvalue(L, -1);           \
-        lua_setfield(L, -2, "__index"); \
-        luaL_register(L, NULL, t);      \
-        lua_pop(L, 1)
-
 
 int luaopen_sqlite(lua_State *L) {
         set_MT("LuaSQLite", db_mt);
