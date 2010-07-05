@@ -68,9 +68,19 @@ mt.column_iter =
 
 
 if true then
-   print("----------------------------------------")
+   print("---------------------------------------- rows(itf)")
    for id, text, score in s:rows("itf") do
       print(id, text, score)
+   end
+   print("---------------------------------------- rows(*l)")
+   for row in s:rows("*l") do
+      print(row)
+      my.dump(row)
+   end
+   print("---------------------------------------- rows(*t)")
+   for row in s:rows("*t") do
+      print(row)
+      my.dump(row)
    end
    print("----------------------------------------")
 end
