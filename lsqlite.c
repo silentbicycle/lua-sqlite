@@ -515,7 +515,6 @@ static col_info *get_col_info(lua_State *L, sqlite3_stmt *s) {
         return ci;
 }
 
-
 SI rows(lua_State *L) {
         LuaSQLiteStmt *s = check_stmt(1);
         size_t len;
@@ -542,7 +541,6 @@ SI rows(lua_State *L) {
         return 1;
 }
 
-
 /* Upvalues: [stmt, cols] */
 SI row_iter(lua_State *L) {
         LuaSQLiteStmt *s = check_stmt(lua_upvalueindex(1));
@@ -564,7 +562,7 @@ SI row_iter(lua_State *L) {
 static void get_col_types(sqlite3_stmt *stmt, col_info *ci) {
         int i;
         /* Types are unavailable until after calling s:step(). */
-        if (ci->col[0].type == 0) { /* if not already set */
+        if (ci->col[0].type == 0) {      /* if not already set */
                 for (i=0; i < ci->ct; i++) {
                         ci->col[i].type = sqlite3_column_type(stmt, i);
                         ci->col[i].name = sqlite3_column_name(stmt, i);
@@ -582,13 +580,13 @@ SI row_iter_list(lua_State *L) {
         col_info *ci = (col_info*)lua_touserdata(L, lua_upvalueindex(2));
         int i, status;
         assert(ci);
-        get_col_types(stmt, ci);
         status = sqlite3_step(stmt);
+        get_col_types(stmt, ci);
         if (status == SQLITE_ROW) {
                 lua_createtable(L, ci->ct, 0);
                 for (i=0; i < ci->ct; i++) {
                         lua_pushinteger(L, i+1);
-                        push_col(L, stmt, i, 3 /*FIXME ci->type[i]*/);
+                        push_col(L, stmt, i, ci->col[i].type);
                         lua_settable(L, -3);
                 }
                 return 1;
@@ -600,22 +598,20 @@ SI row_iter_list(lua_State *L) {
         }
 }
 
-
-/* Upvalues: [stmt, col_info] */
 SI row_iter_table(lua_State *L) {
         LuaSQLiteStmt *s = check_stmt(lua_upvalueindex(1));
         sqlite3_stmt *stmt = s->v;
         col_info *ci = (col_info*)lua_touserdata(L, lua_upvalueindex(2));
         int i, status;
         assert(ci);
-        get_col_types(stmt, ci);
 
         status = sqlite3_step(stmt);
+        get_col_types(stmt, ci);
         if (status == SQLITE_ROW) {
                 lua_createtable(L, ci->ct, 0);
                 for (i=0; i < ci->ct; i++) {
                         lua_pushstring(L, ci->col[i].name);
-                        push_col(L, stmt, i, 3 /*FIXME ci->type[i]*/);
+                        push_col(L, stmt, i, ci->col[i].type);
                         lua_settable(L, -3);
                 }
                 return 1;
@@ -628,7 +624,6 @@ SI row_iter_table(lua_State *L) {
 
         return 0;
 }
-
 
 SI col_double(lua_State *L) {
         LuaSQLiteStmt *s = check_stmt(1);
