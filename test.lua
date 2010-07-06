@@ -26,7 +26,7 @@ end
 -- Bind by s:bind(":key", value)
 function test_bind_imperative()
    local s = db:prepare("INSERT INTO foo (t, s) VALUES (:f, :s);")
-   s:bind(":f", "balloonis")
+   s:bind(":f", "foo")
    s:bind(":s", 1234.5)
    step_and_reset(s)
 end
@@ -41,7 +41,7 @@ end
 -- Bind by k=v table
 function test_bind_table()
    local s = db:prepare("INSERT INTO foo (t, s) VALUES (:f, :s);")
-   s:bind { f="malarkey", s=30949 }
+   s:bind { f="banana", s=30949 }
    step_and_reset(s)
 end
 
