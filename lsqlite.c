@@ -660,6 +660,7 @@ SI row_iter_list(lua_State *L) {
                         push_col(L, stmt, i, ci->col[i].type);
                         lua_settable(L, -3);
                 }
+                free(ci);
                 return 1;
         } else {
                 sqlite3_reset(stmt);
@@ -685,6 +686,7 @@ SI row_iter_table(lua_State *L) {
                         push_col(L, stmt, i, ci->col[i].type);
                         lua_settable(L, -3);
                 }
+                free(ci);
                 return 1;
         } else {
                 sqlite3_reset(stmt);
