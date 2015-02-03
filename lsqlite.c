@@ -502,12 +502,20 @@ static void push_col(lua_State *L, sqlite3_stmt *stmt, int i, int t) {
         case SQLITE_TEXT:
                 tlen = sqlite3_column_bytes(stmt, i);
                 c = sqlite3_column_text(stmt, i);
-                lua_pushlstring(L, c, tlen);
+                if ( NULL == c ) {
+                    lua_pushnil(L);
+                } else {
+                    lua_pushlstring(L, c, tlen);
+                }
                 break;
         case SQLITE_BLOB:
                 tlen = sqlite3_column_bytes(stmt, i);
                 c = (const char*)sqlite3_column_blob(stmt, i);
-                lua_pushlstring(L, c, tlen);
+                if ( NULL == c ) {
+                    lua_pushnil(L);
+                } else {
+                    lua_pushlstring(L, c, tlen);
+                }
                 break;
         case SQLITE_NULL:
                 lua_pushnil(L);
